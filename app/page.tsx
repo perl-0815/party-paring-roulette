@@ -403,7 +403,7 @@ export default function Home() {
             パーティペアリングルーレット
           </h1>
           <p className="mt-3 text-lg text-white/80">
-            CSVインポート・属性バランス・優先組み合わせに対応した二人組ルーレット。ブラウザのみで動作し、イベント中の盛り上げ演出に集中できます。
+            CSVインポート・属性バランス・優先組み合わせに対応した二人組を作るためのルーレット。ブラウザのみで動作します。
           </p>
           <div className="mt-6 flex flex-wrap gap-4 text-sm text-white/80">
             <span className="rounded-full border border-white/20 px-4 py-1">参加者 {totalParticipants} 名</span>
