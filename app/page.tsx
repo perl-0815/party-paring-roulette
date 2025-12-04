@@ -24,6 +24,7 @@ type Preference = {
 type Settings = {
   avoidSameAttribute: boolean;
   preferredCombos: Preference[];
+  preferredHitRate: number; // 0-100%
 };
 
 type ViewMode = "setup" | "roulette";
@@ -92,6 +93,7 @@ export default function Home() {
   const [settings, setSettings] = useState<Settings>({
     avoidSameAttribute: true,
     preferredCombos: [],
+    preferredHitRate: 100,
   });
   const [view, setView] = useState<ViewMode>("setup");
   const [newParticipant, setNewParticipant] = useState({ attribute: "", name: "" });
@@ -161,6 +163,7 @@ export default function Home() {
               from: combo.from,
               to: combo.to,
             })),
+            preferredHitRate: parsed.settings.preferredHitRate ?? 100,
           });
         }
         if (parsed.view) setView(parsed.view);
@@ -272,6 +275,11 @@ export default function Home() {
     }));
   };
 
+  const handlePreferredHitRateChange = (value: number) => {
+    const clamped = Math.min(100, Math.max(0, value));
+    setSettings((prev) => ({ ...prev, preferredHitRate: clamped }));
+  };
+
   const buildTrio = (pool: Participant[]): PairGroup => {
     const trioMembers = shuffleList(pool).slice(0, 3);
     return {
@@ -315,7 +323,9 @@ export default function Home() {
     if (availableParticipants.length === 3) {
       return buildTrio(availableParticipants);
     }
-    const preferred = pickPreferredPair(availableParticipants);
+    const shouldUsePreferred =
+      settings.preferredCombos.length > 0 && Math.random() * 100 < settings.preferredHitRate;
+    const preferred = shouldUsePreferred ? pickPreferredPair(availableParticipants) : null;
     const different = pickDifferentAttributePair(availableParticipants);
     const fallbackPair = shuffleList(availableParticipants).slice(0, 2);
     const members = preferred || different || fallbackPair;
@@ -354,7 +364,7 @@ export default function Home() {
     setParticipants([]);
     setPairs([]);
     setAvailableIds([]);
-    setSettings({ avoidSameAttribute: true, preferredCombos: [] });
+    setSettings({ avoidSameAttribute: true, preferredCombos: [], preferredHitRate: 100 });
     setView("setup");
     setLatestHighlight(null);
     setSpotlights(FALLBACK_SPOTLIGHTS);
@@ -442,6 +452,7 @@ export default function Home() {
             onReset={requestFullReset}
             settings={settings}
             onToggleAvoidSame={toggleAvoidSame}
+            onPreferredHitRateChange={handlePreferredHitRateChange}
             newPreference={newPreference}
             onPreferenceChange={handlePreferenceFieldChange}
             onAddPreference={handleAddPreference}
@@ -497,6 +508,7 @@ type SetupViewProps = {
   onReset: () => void;
   settings: Settings;
   onToggleAvoidSame: () => void;
+  onPreferredHitRateChange: (value: number) => void;
   newPreference: { from: string; to: string };
   onPreferenceChange: (field: "from" | "to", value: string) => void;
   onAddPreference: () => void;
@@ -518,6 +530,7 @@ function SetupView({
   onReset,
   settings,
   onToggleAvoidSame,
+  onPreferredHitRateChange,
   newPreference,
   onPreferenceChange,
   onAddPreference,
@@ -674,6 +687,24 @@ function SetupView({
                 </button>
               </span>
             ))}
+          </div>
+          <div className="mt-6 rounded-2xl border border-white/10 bg-black/30 p-4">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="font-medium text-white">優先組み合わせが選ばれる確率</p>
+                <p className="text-sm text-white/70">0%で無効、100%で必ず適用します。</p>
+              </div>
+              <span className="text-lg font-semibold text-purple-100">{settings.preferredHitRate}%</span>
+            </div>
+            <input
+              type="range"
+              min={0}
+              max={100}
+              step={5}
+              value={settings.preferredHitRate}
+              onChange={(event) => onPreferredHitRateChange(Number(event.target.value))}
+              className="mt-3 w-full accent-purple-300"
+            />
           </div>
         </div>
         <div className="rounded-3xl border border-white/10 bg-black/40 p-5 text-white shadow-lg">
