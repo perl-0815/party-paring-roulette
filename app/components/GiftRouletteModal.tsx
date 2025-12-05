@@ -1,6 +1,6 @@
 "use client";
 
-import { Participant } from "../page";
+import type { Participant } from "../page";
 
 type GiftRouletteModalProps = {
   isOpen: boolean;

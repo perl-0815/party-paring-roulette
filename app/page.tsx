@@ -4,7 +4,7 @@ import Link from "next/link";
 import { ChangeEvent, startTransition, useEffect, useMemo, useState } from "react";
 import { GiftRouletteModal } from "./components/GiftRouletteModal";
 
-type Participant = {
+export type Participant = {
   id: string;
   attribute: string;
   name: string;
