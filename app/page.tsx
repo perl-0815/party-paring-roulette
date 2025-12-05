@@ -941,9 +941,6 @@ function SetupView({
               />
             </button>
           </div>
-          <div className="mt-6 rounded-2xl border border-dashed border-white/15 p-4 text-sm text-white/70">
-            奇数人数になった場合は最後の1組が3人組（トリオ）になります。
-          </div>
         </div>
       </section>
     </div>
