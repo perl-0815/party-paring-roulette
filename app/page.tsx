@@ -1,6 +1,8 @@
 "use client";
 
+import Link from "next/link";
 import { ChangeEvent, startTransition, useEffect, useMemo, useState } from "react";
+import { GiftRouletteModal } from "./components/GiftRouletteModal";
 
 type Participant = {
   id: string;
@@ -29,7 +31,10 @@ type Settings = {
 
 type ViewMode = "setup" | "roulette";
 
-const STORAGE_KEY = "party-pairing-roulette-state";
+const STORAGE_KEYS = {
+  pair: "party-pairing-roulette-state",
+  gift: "party-gift-roulette-state",
+} as const;
 const FALLBACK_SPOTLIGHTS = ["Ready", "Set", "Go"];
 
 const gradientPool = [
@@ -86,10 +91,11 @@ const parseCsv = (raw: string): Participant[] => {
   return participants;
 };
 
-export default function Home() {
+export function RouletteApp({ mode = "pair" }: { mode?: "pair" | "gift" }) {
   const [participants, setParticipants] = useState<Participant[]>([]);
   const [pairs, setPairs] = useState<PairGroup[]>([]);
   const [availableIds, setAvailableIds] = useState<string[]>([]);
+  const storageKey = mode === "gift" ? STORAGE_KEYS.gift : STORAGE_KEYS.pair;
   const [settings, setSettings] = useState<Settings>({
     avoidSameAttribute: true,
     preferredCombos: [],
@@ -103,6 +109,25 @@ export default function Home() {
   const [spotlights, setSpotlights] = useState<string[]>(FALLBACK_SPOTLIGHTS);
   const [latestHighlight, setLatestHighlight] = useState<PairGroup | null>(null);
   const [statusText, setStatusText] = useState("準備完了！");
+  const [giftStatusText, setGiftStatusText] = useState("準備完了！");
+  const [giftSpotlights, setGiftSpotlights] = useState<string[]>(FALLBACK_SPOTLIGHTS);
+  const [giftChainIds, setGiftChainIds] = useState<string[]>([]);
+  const [isGiftSpinning, setIsGiftSpinning] = useState(false);
+  const [isGiftModalOpen, setIsGiftModalOpen] = useState(false);
+  const giftChainEdges = useMemo(() => {
+    const edges: { from: Participant; to: Participant }[] = [];
+    if (giftChainIds.length < 2) return edges;
+    const mapped = giftChainIds
+      .map((id) => participants.find((entry) => entry.id === id) || null)
+      .filter((entry): entry is Participant => Boolean(entry));
+    for (let i = 0; i < mapped.length - 1; i += 1) {
+      edges.push({ from: mapped[i], to: mapped[i + 1] });
+    }
+    if (mapped.length > 1) {
+      edges.push({ from: mapped[mapped.length - 1], to: mapped[0] });
+    }
+    return edges;
+  }, [giftChainIds, participants]);
   const [csvError, setCsvError] = useState<string | null>(null);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [isRouletteModalOpen, setIsRouletteModalOpen] = useState(false);
@@ -140,11 +165,21 @@ export default function Home() {
       .filter((entry): entry is Participant => Boolean(entry));
   }, [availableIds, participants]);
 
+  const giftChain = useMemo(() => {
+    return giftChainIds
+      .map((id) => participants.find((entry) => entry.id === id) || null)
+      .filter((entry): entry is Participant => Boolean(entry));
+  }, [giftChainIds, participants]);
+  const giftRemainingParticipants = useMemo(() => {
+    const chainSet = new Set(giftChainIds);
+    return participants.filter((entry) => !chainSet.has(entry.id));
+  }, [giftChainIds, participants]);
+
   const remainingCount = availableParticipants.length;
   const totalParticipants = participants.length;
   useEffect(() => {
     if (typeof window === "undefined") return;
-    const cached = window.localStorage.getItem(STORAGE_KEY);
+    const cached = window.localStorage.getItem(storageKey);
     if (!cached) {
       startTransition(() => setHasHydrated(true));
       return;
@@ -166,6 +201,8 @@ export default function Home() {
             preferredHitRate: parsed.settings.preferredHitRate ?? 100,
           });
         }
+        if (Array.isArray(parsed.giftChainIds)) setGiftChainIds(parsed.giftChainIds);
+        if (typeof parsed.giftStatusText === "string") setGiftStatusText(parsed.giftStatusText);
         if (parsed.view) setView(parsed.view);
         setHasHydrated(true);
       });
@@ -173,7 +210,7 @@ export default function Home() {
       console.error("Failed to load cache", error);
       startTransition(() => setHasHydrated(true));
     }
-  }, []);
+  }, [storageKey]);
 
   useEffect(() => {
     if (!hasHydrated) return;
@@ -183,10 +220,12 @@ export default function Home() {
       pairs,
       availableIds,
       settings,
+      giftChainIds,
+      giftStatusText,
       view,
     };
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
-  }, [participants, pairs, availableIds, settings, view, hasHydrated]);
+    window.localStorage.setItem(storageKey, JSON.stringify(payload));
+  }, [participants, pairs, availableIds, settings, view, giftChainIds, giftStatusText, hasHydrated, storageKey]);
 
   useEffect(() => {
     if (!isSpinning) return;
@@ -201,6 +240,20 @@ export default function Home() {
     }, 130);
     return () => clearInterval(interval);
   }, [isSpinning, availableParticipants, participants]);
+
+  useEffect(() => {
+    if (!isGiftSpinning) return;
+    const interval = setInterval(() => {
+      const pool = participants.length ? participants : [];
+      if (!pool.length) {
+        setGiftSpotlights(FALLBACK_SPOTLIGHTS);
+        return;
+      }
+      const shuffled = shuffleList(pool);
+      setGiftSpotlights(shuffled.slice(0, Math.min(3, shuffled.length)).map((entry) => entry.name));
+    }, 130);
+    return () => clearInterval(interval);
+  }, [isGiftSpinning, participants]);
 
   const handleCsvUpload = (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -318,6 +371,32 @@ export default function Home() {
     return null;
   };
 
+  const pickPreferredRecipient = (giver: Participant, pool: Participant[]): Participant | null => {
+    if (!settings.preferredCombos.length) return null;
+    const normalized = normalize(giver.attribute);
+    const matchingCombos = settings.preferredCombos.filter(
+      (pref) => normalize(pref.from) === normalized
+    );
+    if (!matchingCombos.length) return null;
+    const candidates: Participant[] = [];
+    matchingCombos.forEach((pref) => {
+      const targetAttr = normalize(pref.to);
+      const hits = pool.filter((member) => normalize(member.attribute) === targetAttr);
+      candidates.push(...hits);
+    });
+    if (!candidates.length) return null;
+    return candidates[Math.floor(Math.random() * candidates.length)];
+  };
+
+  const pickDifferentAttributeRecipient = (giver: Participant, pool: Participant[]): Participant | null => {
+    if (!settings.avoidSameAttribute) return null;
+    const candidates = pool.filter(
+      (member) => normalize(member.attribute) !== normalize(giver.attribute)
+    );
+    if (!candidates.length) return null;
+    return candidates[Math.floor(Math.random() * candidates.length)];
+  };
+
   const createNextGroup = () => {
     if (availableParticipants.length < 2) return null;
     if (availableParticipants.length === 3) {
@@ -357,6 +436,68 @@ export default function Home() {
     }, 2300);
   };
 
+  const handleGiftSpin = () => {
+    if (isGiftSpinning || participants.length < 2) return;
+    const cleanedChain = giftChainIds.filter((id) => participants.some((entry) => entry.id === id));
+    const cleanedRemaining = participants
+      .map((entry) => entry.id)
+      .filter((id) => !cleanedChain.includes(id));
+    setGiftChainIds(cleanedChain);
+    if (cleanedChain.length && cleanedRemaining.length === 0) {
+      setGiftStatusText("全員の順番が確定しています。クリアして再抽選できます。");
+      return;
+    }
+    setIsGiftSpinning(true);
+    setGiftStatusText("プレゼント抽選中…");
+    setGiftSpotlights(FALLBACK_SPOTLIGHTS);
+    setTimeout(() => {
+      const baseChain = cleanedChain;
+      const baseRemaining = participants
+        .map((entry) => entry.id)
+        .filter((id) => !baseChain.includes(id));
+      if (!baseChain.length) {
+        const starter = participants[Math.floor(Math.random() * participants.length)];
+        setGiftChainIds([starter.id]);
+        setGiftStatusText(`${starter.name} がスタート！次の相手を抽選できます。`);
+        setIsGiftSpinning(false);
+        return;
+      }
+      const giverId = baseChain[baseChain.length - 1];
+      const giver = participants.find((member) => member.id === giverId);
+      if (!giver) {
+        setGiftStatusText("参加者が更新されたため抽選を中断しました。リセット後に再抽選してください。");
+        setIsGiftSpinning(false);
+        return;
+      }
+      const availablePool = participants.filter((member) => baseRemaining.includes(member.id));
+      if (!availablePool.length) {
+        setGiftStatusText("残りの参加者が見つかりませんでした。リセットして再抽選してください。");
+        setIsGiftSpinning(false);
+        return;
+      }
+      const shouldUsePreferred =
+        settings.preferredCombos.length > 0 && Math.random() * 100 < settings.preferredHitRate;
+      const preferred = shouldUsePreferred ? pickPreferredRecipient(giver, availablePool) : null;
+      const different = pickDifferentAttributeRecipient(giver, availablePool);
+      const fallback = availablePool[Math.floor(Math.random() * availablePool.length)];
+      const recipient = preferred || different || fallback;
+      if (!recipient) {
+        setGiftStatusText("抽選できませんでした。もう一度お試しください。");
+        setIsGiftSpinning(false);
+        return;
+      }
+      const newChain = [...baseChain, recipient.id];
+      const newRemaining = baseRemaining.filter((id) => id !== recipient.id);
+      setGiftChainIds(newChain);
+      setGiftStatusText(
+        newRemaining.length === 0
+          ? "全員の順番が確定しました。"
+          : `${recipient.name} が決定！残り ${newRemaining.length} 人`
+      );
+      setIsGiftSpinning(false);
+    }, 2300);
+  };
+
   const handleReset = () => {
     setShowResetConfirm(false);
     setIsRouletteModalOpen(false);
@@ -369,15 +510,29 @@ export default function Home() {
     setLatestHighlight(null);
     setSpotlights(FALLBACK_SPOTLIGHTS);
     setStatusText("リセットしました");
+    setGiftChainIds([]);
+    setGiftSpotlights(FALLBACK_SPOTLIGHTS);
+    setGiftStatusText("準備完了！");
+    setIsGiftSpinning(false);
     if (typeof window !== "undefined") {
-      window.localStorage.removeItem(STORAGE_KEY);
+      window.localStorage.removeItem(storageKey);
     }
   };
 
-  const requestFullReset = () => setShowResetConfirm(true);
-  const cancelResetRequest = () => setShowResetConfirm(false);
+const requestFullReset = () => setShowResetConfirm(true);
+const cancelResetRequest = () => setShowResetConfirm(false);
+
+const handleGiftReset = () => {
+  if (isGiftSpinning) return;
+  setGiftChainIds([]);
+  setGiftSpotlights(FALLBACK_SPOTLIGHTS);
+  setGiftStatusText("結果をクリアしました");
+  setIsGiftModalOpen(false);
+};
 
   const disableSpinButton = isSpinning || availableParticipants.length < 2;
+  const giftComplete = giftChainIds.length > 0 && giftRemainingParticipants.length === 0;
+  const disableGiftSpinButton = isGiftSpinning || participants.length < 2 || giftComplete;
   const showTrioHint = availableParticipants.length === 3;
   const toggleAvoidSame = () => {
     setSettings((prev) => ({
@@ -385,14 +540,26 @@ export default function Home() {
       avoidSameAttribute: !prev.avoidSameAttribute,
     }));
   };
-  const handleOpenRouletteModal = () => {
-    if (disableSpinButton) return;
-    setIsRouletteModalOpen(true);
-    handleSpin();
-  };
   const handleCloseRouletteModal = () => {
     if (isSpinning) return;
     setIsRouletteModalOpen(false);
+  };
+  const handleGoToRoulette = () => {
+    if (participants.length < 2) return;
+    setView("roulette");
+  };
+
+  const handleOpenRouletteModal = () => {
+    if (isSpinning || availableParticipants.length < 2) return;
+    setIsRouletteModalOpen(true);
+    handleSpin();
+  };
+
+  const handleOpenGiftModal = () => {
+    if (participants.length < 2 || isGiftSpinning) return;
+    setView("roulette");
+    setIsGiftModalOpen(true);
+    handleGiftSpin();
   };
 
   const handleReleasePair = (pairId: string) => {
@@ -404,16 +571,38 @@ export default function Home() {
     setLatestHighlight((prev) => (prev && prev.id === pairId ? null : prev));
   };
 
+  const theme = mode === "pair"
+    ? {
+        bg: "bg-gradient-to-b from-emerald-950 via-slate-950 to-black",
+        card: "border-emerald-200/30 bg-emerald-900/40",
+        accent: "text-emerald-200",
+        button:
+          participants.length < 2
+            ? "cursor-not-allowed bg-emerald-200/20 text-emerald-100/60"
+            : "bg-emerald-300 text-emerald-950 shadow-lg shadow-emerald-300/40",
+      }
+    : {
+        bg: "bg-gradient-to-b from-indigo-950 via-slate-950 to-black",
+        card: "border-indigo-200/30 bg-indigo-900/40",
+        accent: "text-indigo-200",
+        button:
+          participants.length < 2
+            ? "cursor-not-allowed bg-indigo-200/20 text-indigo-100/60"
+            : "bg-indigo-300 text-indigo-950 shadow-lg shadow-indigo-300/40",
+      };
+
   return (
-    <div className="min-h-screen bg-[radial-gradient(circle_at_top,_rgba(244,114,182,0.25),_rgba(2,6,23,1))] pb-16 text-white">
+    <div className={`min-h-screen ${theme.bg} pb-16 text-white`}>
       <div className="mx-auto flex max-w-6xl flex-col gap-10 px-4 pt-12 lg:px-8">
-        <header className="rounded-3xl border border-white/10 bg-black/50 p-8 text-white shadow-[0_40px_140px_rgba(3,7,18,0.8)]">
-          <p className="text-sm uppercase tracking-[0.4em] text-pink-200">PARTY TOOL</p>
+        <header className={`rounded-3xl border border-white/10 bg-black/50 p-8 text-white shadow-[0_40px_140px_rgba(3,7,18,0.8)] ${theme.card}`}>
+          <p className={`text-sm uppercase tracking-[0.4em] ${theme.accent}`}>PARTY TOOL</p>
           <h1 className="mt-4 text-4xl font-bold leading-tight tracking-tight md:text-5xl">
-            パーティペアリングルーレット
+            {mode === "pair" ? "ペアリングルーレット" : "プレゼントリレールーレット"}
           </h1>
           <p className="mt-3 text-lg text-white/80">
-            CSVインポート・属性バランス・優先組み合わせに対応した二人組を作るためのルーレット。ブラウザのみで動作します。
+            {mode === "pair"
+              ? "CSVインポート・属性バランス・優先組み合わせに対応した二人組を作るためのルーレット。ブラウザのみで動作します。"
+              : "最初の人を決めてから1人ずつ抽選し、最後の人が最初の人へプレゼントを渡すリレー形式。優先設定と同属性回避を活用できます。"}
           </p>
           <div className="mt-6 flex flex-wrap gap-4 text-sm text-white/80">
             <span className="rounded-full border border-white/20 px-4 py-1">参加者 {totalParticipants} 名</span>
@@ -423,15 +612,11 @@ export default function Home() {
           <div className="mt-8 flex flex-wrap gap-4">
             <button
               type="button"
-              onClick={() => setView("roulette")}
+              onClick={handleGoToRoulette}
               disabled={participants.length < 2}
-              className={`rounded-full px-8 py-3 text-lg font-semibold transition ${
-                participants.length < 2
-                  ? "cursor-not-allowed bg-white/20 text-white/60"
-                  : "bg-white text-slate-950 shadow-lg shadow-white/30"
-              }`}
+              className={`rounded-full px-8 py-3 text-lg font-semibold transition ${theme.button}`}
             >
-              ルーレット画面へ
+              ルーレットページへ移動
             </button>
           </div>
         </header>
@@ -457,12 +642,14 @@ export default function Home() {
             onPreferenceChange={handlePreferenceFieldChange}
             onAddPreference={handleAddPreference}
             onRemovePreference={handleRemovePreference}
+            cardToneClass={theme.card}
           />
         ) : (
           <RouletteView
             statusText={statusText}
             showTrioHint={showTrioHint}
             onOpenRouletteModal={handleOpenRouletteModal}
+            onOpenGiftModal={handleOpenGiftModal}
             onReleasePair={handleReleasePair}
             disableSpinButton={disableSpinButton}
             pairs={pairs}
@@ -472,6 +659,13 @@ export default function Home() {
             onBackToSetup={() => setView("setup")}
             onReset={requestFullReset}
             isSpinning={isSpinning}
+            giftChain={giftChain}
+            giftStatusText={giftStatusText}
+            onGiftReset={handleGiftReset}
+            disableGiftSpinButton={disableGiftSpinButton}
+            isGiftSpinning={isGiftSpinning}
+            giftRemainingParticipants={giftRemainingParticipants}
+            mode={mode}
           />
         )}
       </div>
@@ -488,6 +682,22 @@ export default function Home() {
         open={showResetConfirm}
         onCancel={cancelResetRequest}
         onConfirm={handleReset}
+      />
+      <GiftRouletteModal
+        isOpen={isGiftModalOpen}
+        onClose={() => {
+          if (isGiftSpinning) return;
+          setIsGiftModalOpen(false);
+        }}
+        isSpinning={isGiftSpinning}
+        spotlights={giftSpotlights}
+        statusText={giftStatusText}
+        chain={giftChain}
+        remainingParticipants={giftRemainingParticipants}
+        onSpin={handleGiftSpin}
+        disableSpin={disableGiftSpinButton}
+        onReset={handleGiftReset}
+        edges={giftChainEdges}
       />
     </div>
   );
@@ -513,6 +723,7 @@ type SetupViewProps = {
   onPreferenceChange: (field: "from" | "to", value: string) => void;
   onAddPreference: () => void;
   onRemovePreference: (id: string) => void;
+  cardToneClass: string;
 };
 
 function SetupView({
@@ -535,6 +746,7 @@ function SetupView({
   onPreferenceChange,
   onAddPreference,
   onRemovePreference,
+  cardToneClass,
 }: SetupViewProps) {
   return (
     <div className="space-y-8">
@@ -592,7 +804,7 @@ function SetupView({
       </section>
 
       <section className="grid gap-6 lg:grid-cols-3">
-        <div className="rounded-3xl border border-white/10 bg-white/5 p-5 shadow-lg backdrop-blur lg:col-span-2">
+        <div className={`rounded-3xl border border-white/10 ${cardToneClass} p-5 shadow-lg backdrop-blur lg:col-span-2`}>
           <p className="text-sm uppercase tracking-[0.3em] text-sky-200">INPUT</p>
           <h3 className="text-xl font-semibold text-white">参加者を追加</h3>
           <div className="mt-4 flex flex-col gap-3 sm:flex-row">
@@ -742,6 +954,7 @@ type RouletteViewProps = {
   statusText: string;
   showTrioHint: boolean;
   onOpenRouletteModal: () => void;
+  onOpenGiftModal: () => void;
   onReleasePair: (pairId: string) => void;
   disableSpinButton: boolean;
   pairs: PairGroup[];
@@ -751,12 +964,20 @@ type RouletteViewProps = {
   onBackToSetup: () => void;
   onReset: () => void;
   isSpinning: boolean;
+  giftChain: Participant[];
+  giftStatusText: string;
+  onGiftReset: () => void;
+  disableGiftSpinButton: boolean;
+  isGiftSpinning: boolean;
+  giftRemainingParticipants: Participant[];
+  mode: "pair" | "gift";
 };
 
 function RouletteView({
   statusText,
   showTrioHint,
   onOpenRouletteModal,
+  onOpenGiftModal,
   onReleasePair,
   disableSpinButton,
   pairs,
@@ -766,7 +987,27 @@ function RouletteView({
   onBackToSetup,
   onReset,
   isSpinning,
+  giftChain,
+  giftStatusText,
+  onGiftReset,
+  disableGiftSpinButton,
+  isGiftSpinning,
+  giftRemainingParticipants,
+  mode,
 }: RouletteViewProps) {
+  const giftComplete = giftChain.length > 0 && giftRemainingParticipants.length === 0;
+  const heroStatus = mode === "pair" ? statusText : giftStatusText;
+  const heroButtonDisabled =
+    mode === "pair" ? disableSpinButton : isGiftSpinning || totalParticipants < 2;
+  const heroButtonLabel =
+    mode === "pair"
+      ? "ルーレット開始"
+      : giftChain.length === 0
+      ? "最初の人を抽選する"
+      : giftComplete
+      ? "全員決定済み"
+      : "次の人を抽選する";
+  const heroOnClick = mode === "pair" ? onOpenRouletteModal : onOpenGiftModal;
   return (
     <div className="space-y-8">
       <section className="relative overflow-hidden rounded-3xl border border-white/10 bg-gradient-to-br from-slate-900/80 via-fuchsia-900/50 to-amber-900/40 p-8 text-white shadow-[0_40px_120px_rgba(0,0,0,0.55)]">
@@ -775,103 +1016,214 @@ function RouletteView({
         </div>
         <div className="relative z-10 flex flex-col items-center text-center">
           <p className="text-sm uppercase tracking-[0.4em] text-fuchsia-200">ROULETTE</p>
-          <h2 className="mt-2 text-3xl font-semibold">ペアリングルーレット</h2>
-          <p className="mt-3 text-sm text-white/80">{statusText}</p>
-          {showTrioHint && (
+          <h2 className="mt-2 text-3xl font-semibold">
+            {mode === "pair" ? "ペアリングルーレット" : "プレゼントリレールーレット"}
+          </h2>
+          <p className="mt-3 text-sm text-white/80">{heroStatus}</p>
+          {mode === "pair" && showTrioHint && (
             <p className="mt-2 rounded-full border border-amber-200/40 px-3 py-1 text-xs text-amber-200">
               残り3名のため、自動的にトリオが形成されます。
             </p>
           )}
           <p className="mt-4 text-sm text-white/70">
-            ルーレット開始ボタンを押すと、モーダル内で抽選演出が始まります。
+            {mode === "pair"
+              ? "ルーレット開始ボタンを押すと、モーダル内で抽選演出が始まります。"
+              : "最初の人を決めてから1人ずつ抽選し、最後の人が最初の人へプレゼントを戻します。"}
           </p>
           <button
             type="button"
-            onClick={onOpenRouletteModal}
-            disabled={disableSpinButton}
+            onClick={heroOnClick}
+            disabled={heroButtonDisabled}
             className={`mt-6 flex items-center gap-3 rounded-full px-8 py-3 text-lg font-semibold transition ${
-              disableSpinButton
+              heroButtonDisabled
                 ? "cursor-not-allowed bg-white/20 text-white/40"
                 : "bg-white text-slate-900 shadow-lg shadow-white/40"
             }`}
           >
-            ルーレット開始
+            {heroButtonLabel}
           </button>
         </div>
       </section>
 
-      <section className="grid gap-6 lg:grid-cols-3">
-        <div className="rounded-3xl border border-white/10 bg-white/5 p-6 shadow-2xl lg:col-span-2">
-          <div className="flex flex-col gap-2 border-b border-white/10 pb-4 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <p className="text-sm uppercase tracking-[0.3em] text-cyan-200">PAIRS</p>
-              <h3 className="text-2xl font-semibold text-white">確定済みペア一覧</h3>
-            </div>
-            <span className="text-sm text-white/70">{pairs.length} 組 / {totalParticipants} 名</span>
-          </div>
-          <div className="mt-6 grid gap-4 md:grid-cols-2">
-            {pairs.length === 0 && (
-              <p className="rounded-2xl border border-dashed border-white/20 bg-black/20 p-6 text-center text-white/70">
-                まだペアはありません。ルーレットを回して盛り上げましょう！
-              </p>
-            )}
-            {pairs.map((group, index) => (
-              <div
-                key={group.id}
-                className={`relative rounded-2xl border border-white/10 bg-gradient-to-br ${
-                  gradientPool[index % gradientPool.length]
-                } p-5 text-slate-900 ${glowPool[index % glowPool.length]}`}
-              >
-                <button
-                  type="button"
-                  onClick={() => onReleasePair(group.id)}
-                  disabled={isSpinning}
-                  className={`absolute right-4 top-4 rounded-full border px-3 py-1 text-xs font-semibold transition ${
-                    isSpinning
-                      ? "cursor-not-allowed border-slate-900/20 text-slate-900/30"
-                      : "border-slate-900/40 text-slate-900/80 hover:border-slate-900/80 hover:text-slate-900"
-                  }`}
-                >
-                  解除
-                </button>
-                <p className="text-xs font-semibold uppercase tracking-[0.4em] text-slate-900/70">
-                  {group.isTrio ? "TRIO" : "PAIR"} #{index + 1}
-                </p>
-                <p className="mt-2 text-xl font-bold">
-                  {group.members.map((member) => member.name).join(" × ")}
-                </p>
-                <p className="text-sm text-slate-900/80">
-                  {group.members.map((member) => member.attribute).join(" / ")}
-                </p>
-              </div>
-            ))}
-          </div>
-        </div>
-        <div className="rounded-3xl border border-white/10 bg-black/40 p-6 text-white shadow-2xl">
-          <p className="text-sm uppercase tracking-[0.3em] text-pink-200">WAITING</p>
-          <h3 className="text-2xl font-semibold">未ペア参加者</h3>
-          <p className="text-sm text-white/70">残り {remainingCount} 名</p>
-          <div className="mt-4 flex flex-col gap-3">
-            {availableParticipants.length === 0 && (
-              <p className="rounded-2xl border border-dashed border-white/20 bg-white/5 p-4 text-center text-white/70">
-                すべてのペアが決定しました！
-              </p>
-            )}
-            {availableParticipants.map((participant) => (
-              <div
-                key={participant.id}
-                className="flex items-center justify-between rounded-2xl border border-white/10 bg-white/5 px-4 py-2"
-              >
-                <div>
-                  <p className="font-semibold">{participant.name}</p>
-                  <p className="text-xs text-white/60">{participant.attribute}</p>
+      {mode === "gift" && (
+        <section className="grid gap-6 lg:grid-cols-3">
+          <div className="rounded-3xl border border-white/10 bg-gradient-to-br from-slate-900/80 via-indigo-900/40 to-fuchsia-900/40 p-6 shadow-[0_30px_120px_rgba(0,0,0,0.55)] lg:col-span-2">
+            <p className="text-sm uppercase tracking-[0.3em] text-indigo-200">GIFT RELAY</p>
+            <h3 className="mt-2 text-2xl font-semibold text-white">プレゼントリレールーレット</h3>
+            <p className="mt-1 text-sm text-white/80">{giftStatusText}</p>
+          {mode === "gift" && (
+            <>
+              {!isGiftSpinning && (
+                <div className="mt-6 flex flex-col gap-4">
+                  {giftChain.length === 0 && (
+                    <p className="rounded-2xl border border-dashed border-white/25 bg-black/30 p-4 text-center text-white/70">
+                      参加者からランダムに最初の人を決め、優先設定を加味しながら順番をつなげます。最後の人が最初の人へプレゼントを返します。
+                    </p>
+                  )}
+                  {giftChain.length > 0 && (
+                    <>
+                      <div className="flex flex-wrap items-center justify-center gap-3">
+                        {giftChain.map((member, index) => {
+                          const isLast = index === giftChain.length - 1;
+                          return (
+                            <div key={member.id} className="flex items-center gap-3">
+                              <div className="min-w-[160px] rounded-2xl border border-white/15 bg-white/10 px-4 py-3 shadow-lg shadow-black/30">
+                                <p className="text-xs font-semibold uppercase tracking-[0.25em] text-white/60">
+                                  {index === 0 ? "最初の人" : `ステップ ${index + 1}`}
+                                </p>
+                                <p className="text-lg font-bold text-white">{member.name}</p>
+                                <p className="text-sm text-white/70">{member.attribute}</p>
+                              </div>
+                              {!isLast && <span className="text-2xl text-white/60">→</span>}
+                            </div>
+                          );
+                        })}
+                      </div>
+                      {giftChain.length > 1 && (
+                        <div className="flex items-center justify-center gap-2 text-sm text-amber-100">
+                          <span className="rounded-full border border-amber-200/50 px-3 py-1 text-xs uppercase tracking-[0.25em]">
+                            LOOP
+                          </span>
+                          <span>並びが確定しました。</span>
+                        </div>
+                      )}
+                    </>
+                  )}
                 </div>
-                <span className="rounded-full bg-white/10 px-3 py-1 text-xs text-white/80">待機中</span>
-              </div>
-            ))}
+              )}
+              {giftChain.length > 0 && giftRemainingParticipants.length > 0 && !isGiftSpinning && (
+                <p className="mt-2 text-center text-xs text-white/70">
+                  残り {giftRemainingParticipants.length} 人:{" "}
+                  {giftRemainingParticipants.map((member) => member.name).join(" / ")}
+                </p>
+              )}
+            </>
+          )}
+            <div className="mt-6 flex flex-wrap gap-3">
+              {(() => {
+                const label =
+                    giftChain.length === 0
+                      ? "最初の人を抽選する"
+                      : giftComplete
+                      ? "全員決定済み"
+                      : "次の人を抽選する";
+                return (
+                  <button
+                    type="button"
+                    onClick={onOpenGiftModal}
+                    disabled={disableGiftSpinButton}
+                    className={`rounded-full px-6 py-3 text-sm font-semibold transition ${
+                      disableGiftSpinButton
+                        ? "cursor-not-allowed bg-white/10 text-white/50"
+                        : "bg-white text-slate-900 shadow-lg shadow-white/30"
+                    }`}
+                  >
+                    {label}
+                  </button>
+                );
+              })()}
+              <button
+                type="button"
+                onClick={onGiftReset}
+                disabled={isGiftSpinning || giftChain.length === 0}
+                className={`rounded-full border px-6 py-3 text-sm font-semibold transition ${
+                  isGiftSpinning || giftChain.length === 0
+                    ? "cursor-not-allowed border-white/15 text-white/40"
+                    : "border-white/30 text-white hover:border-white hover:text-white"
+                }`}
+              >
+                抽選結果をクリア
+              </button>
+            </div>
           </div>
-        </div>
-      </section>
+          <div className="rounded-3xl border border-white/10 bg-white/5 p-6 text-white shadow-lg">
+            <p className="text-sm uppercase tracking-[0.3em] text-fuchsia-200">GUIDE</p>
+            <h4 className="mt-2 text-xl font-semibold">優先度付きの順番抽選</h4>
+            <ul className="mt-3 space-y-2 text-sm text-white/80">
+              <li>最初に「最初の人」を全員からランダム選出。</li>
+              <li>次の人をボタンで1人ずつ抽選し、順番をつなぐ。</li>
+            </ul>
+            <p className="mt-4 rounded-2xl border border-white/15 bg-black/30 p-4 text-xs text-white/60">
+              参加者が2名未満のときは開始できません。名簿を増やしてからお試しください。
+            </p>
+          </div>
+        </section>
+      )}
+
+      {mode === "pair" && (
+        <section className="grid gap-6 lg:grid-cols-3">
+          <div className="rounded-3xl border border-white/10 bg-white/5 p-6 shadow-2xl lg:col-span-2">
+            <div className="flex flex-col gap-2 border-b border-white/10 pb-4 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <p className="text-sm uppercase tracking-[0.3em] text-cyan-200">PAIRS</p>
+                <h3 className="text-2xl font-semibold text-white">確定済みペア一覧</h3>
+              </div>
+              <span className="text-sm text-white/70">{pairs.length} 組 / {totalParticipants} 名</span>
+            </div>
+            <div className="mt-6 grid gap-4 md:grid-cols-2">
+              {pairs.length === 0 && (
+                <p className="rounded-2xl border border-dashed border-white/20 bg-black/20 p-6 text-center text-white/70">
+                  まだペアはありません！
+                </p>
+              )}
+              {pairs.map((group, index) => (
+                <div
+                  key={group.id}
+                  className={`relative rounded-2xl border border-white/10 bg-gradient-to-br ${
+                    gradientPool[index % gradientPool.length]
+                  } p-5 text-slate-900 ${glowPool[index % glowPool.length]}`}
+                >
+                  <button
+                    type="button"
+                    onClick={() => onReleasePair(group.id)}
+                    disabled={isSpinning}
+                    className={`absolute right-4 top-4 rounded-full border px-3 py-1 text-xs font-semibold transition ${
+                      isSpinning
+                        ? "cursor-not-allowed border-slate-900/20 text-slate-900/30"
+                        : "border-slate-900/40 text-slate-900/80 hover:border-slate-900/80 hover:text-slate-900"
+                    }`}
+                  >
+                    解除
+                  </button>
+                  <p className="text-xs font-semibold uppercase tracking-[0.4em] text-slate-900/70">
+                    {group.isTrio ? "TRIO" : "PAIR"} #{index + 1}
+                  </p>
+                  <p className="mt-2 text-xl font-bold">
+                    {group.members.map((member) => member.name).join(" × ")}
+                  </p>
+                  <p className="text-sm text-slate-900/80">
+                    {group.members.map((member) => member.attribute).join(" / ")}
+                  </p>
+                </div>
+              ))}
+            </div>
+          </div>
+          <div className="rounded-3xl border border-white/10 bg-black/40 p-6 text-white shadow-2xl">
+            <p className="text-sm uppercase tracking-[0.3em] text-pink-200">WAITING</p>
+            <h3 className="text-2xl font-semibold">未ペア参加者</h3>
+            <p className="text-sm text-white/70">残り {remainingCount} 名</p>
+            <div className="mt-4 flex flex-col gap-3">
+              {availableParticipants.length === 0 && (
+                <p className="rounded-2xl border border-dashed border-white/20 bg-white/5 p-4 text-center text-white/70">
+                  すべてのペアが決定しました！
+                </p>
+              )}
+              {availableParticipants.map((participant) => (
+                <div
+                  key={participant.id}
+                  className="flex items-center justify-between rounded-2xl border border-white/10 bg-white/5 px-4 py-2"
+                >
+                  <div>
+                    <p className="font-semibold">{participant.name}</p>
+                    <p className="text-xs text-white/60">{participant.attribute}</p>
+                  </div>
+                  <span className="rounded-full bg-white/10 px-3 py-1 text-xs text-white/80">待機中</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </section>
+      )}
 
       <div className="flex flex-col gap-4 border-t border-white/10 pt-6 sm:flex-row sm:items-center sm:justify-between">
         <button
@@ -891,10 +1243,10 @@ function RouletteView({
           </button>
         </div>
       </div>
+
     </div>
   );
 }
-
 type RouletteModalProps = {
   isOpen: boolean;
   onClose: () => void;
@@ -952,7 +1304,7 @@ function RouletteModal({
                   </div>
                 ))}
               </div>
-              <p className="text-lg text-white/80">ドキドキ...結果をお楽しみに！</p>
+              <p className="text-lg text-white/80">ドキドキ...！</p>
             </>
           )}
           {!isSpinning && latestHighlight && (
@@ -1014,4 +1366,58 @@ function ResetConfirmDialog({ open, onCancel, onConfirm }: ResetConfirmDialogPro
       </div>
     </div>
   );
+}
+
+export default function Home() {
+  return (
+    <div className="min-h-screen bg-[radial-gradient(circle_at_top,_rgba(244,114,182,0.25),_rgba(2,6,23,1))] pb-16 text-white">
+      <div className="mx-auto flex max-w-5xl flex-col gap-10 px-4 pt-12 lg:px-8">
+        <header className="rounded-3xl border border-white/10 bg-black/50 p-8 text-white shadow-[0_40px_140px_rgba(3,7,18,0.8)]">
+          <p className="text-sm uppercase tracking-[0.4em] text-pink-200">PARTY TOOL</p>
+          <h1 className="mt-4 text-4xl font-bold leading-tight tracking-tight md:text-5xl">
+            パーティルーレット
+          </h1>
+          <p className="mt-3 text-lg text-white/80">
+            ペアリングルーレットとプレゼントリレーが行えます。
+          </p>
+        </header>
+
+        <div className="grid gap-6 md:grid-cols-2">
+          <Link
+            href="/pairing"
+            className="group flex h-full flex-col justify-between rounded-3xl border border-emerald-200/30 bg-gradient-to-br from-emerald-500/20 via-emerald-400/10 to-slate-900/60 p-6 shadow-[0_30px_120px_rgba(0,0,0,0.4)] transition hover:-translate-y-1 hover:border-emerald-200"
+          >
+            <div>
+              <p className="text-sm uppercase tracking-[0.35em] text-emerald-100">Pairing</p>
+              <h2 className="mt-3 text-2xl font-semibold text-white">ペアリングルーレット</h2>
+              <p className="mt-3 text-sm text-white/80">
+                優先組み合わせと同属性回避を使ってペア/トリオを決定できます。
+              </p>
+            </div>
+            <span className="mt-4 inline-flex items-center gap-2 text-sm font-semibold text-emerald-50">
+              ペアリングページへ
+              <span aria-hidden className="transition group-hover:translate-x-1">→</span>
+            </span>
+          </Link>
+
+          <Link
+            href="/gift"
+            className="group flex h-full flex-col justify-between rounded-3xl border border-indigo-200/30 bg-gradient-to-br from-indigo-500/20 via-indigo-400/10 to-slate-900/60 p-6 shadow-[0_30px_120px_rgba(0,0,0,0.4)] transition hover:-translate-y-1 hover:border-indigo-200"
+          >
+            <div>
+              <p className="text-sm uppercase tracking-[0.35em] text-indigo-100">Gift Relay</p>
+              <h2 className="mt-3 text-2xl font-semibold text-white">プレゼントリレールーレット</h2>
+              <p className="mt-3 text-sm text-white/80">
+                最初の人を決めてから1人ずつ抽選し、最後の人が最初の人へプレゼントを渡します。
+              </p>
+            </div>
+            <span className="mt-4 inline-flex items-center gap-2 text-sm font-semibold text-indigo-50">
+              プレゼントリレーページへ
+              <span aria-hidden className="transition group-hover:translate-x-1">→</span>
+            </span>
+         </Link>
+       </div>
+     </div>
+   </div>
+ );
 }
