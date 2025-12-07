@@ -1,6 +1,7 @@
 "use client";
 
-import type { Participant } from "../page";
+import { useMemo } from "react";
+import type { Participant } from "./RouletteApp";
 
 type GiftRouletteModalProps = {
   isOpen: boolean;
@@ -14,6 +15,9 @@ type GiftRouletteModalProps = {
   disableSpin: boolean;
   onReset: () => void;
   edges: { from: Participant; to: Participant }[];
+  slotStopped: boolean;
+  slotResultName: string | null;
+  showSparkle: boolean;
 };
 
 const FALLBACK_SPOTLIGHTS = ["Ready", "Set", "Go"];
@@ -30,13 +34,29 @@ export function GiftRouletteModal({
   disableSpin,
   onReset,
   edges,
+  slotStopped,
+  slotResultName,
+  showSparkle,
 }: GiftRouletteModalProps) {
   if (!isOpen) return null;
   const displaySpotlights = spotlights.length ? spotlights : FALLBACK_SPOTLIGHTS;
-  const primarySpotlight = displaySpotlights[0];
+  const slotItems = displaySpotlights.length
+    ? [...displaySpotlights, ...displaySpotlights, ...displaySpotlights, ...displaySpotlights, ...displaySpotlights, ...displaySpotlights]
+    : [...FALLBACK_SPOTLIGHTS, ...FALLBACK_SPOTLIGHTS, ...FALLBACK_SPOTLIGHTS, ...FALLBACK_SPOTLIGHTS];
+  const slotHighlight = slotStopped && slotResultName ? slotResultName : slotItems[0] ?? FALLBACK_SPOTLIGHTS[0];
+  const burstParticles = useMemo(() => {
+    if (!showSparkle) return [];
+    return Array.from({ length: 18 }).map((_, index) => ({
+      id: index,
+      rotate: Math.random() * 360,
+      distance: 120 + Math.random() * 120,
+      delay: Math.random() * 0.25,
+    }));
+  }, [showSparkle]);
   const latestEdge = edges.length ? edges[edges.length - 1] : null;
   const isComplete = chain.length > 1 && remainingParticipants.length === 0;
   const finalHandoff = isComplete && edges.length ? edges[edges.length - 1] : null;
+  const showSlot = isSpinning || slotStopped;
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center px-4 py-10">
       <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" />
@@ -61,10 +81,24 @@ export function GiftRouletteModal({
           </button>
         </div>
         <div className="mt-8 flex flex-col gap-6">
-          {isSpinning && (
+          {showSlot && (
             <div className="flex flex-col items-center gap-4">
-              <div className="animate-pulse rounded-[24px] border border-indigo-300/50 bg-white/10 px-10 py-8 text-4xl font-black tracking-wide text-white shadow-[0_0_60px_rgba(99,102,241,0.35)]">
-                {primarySpotlight}
+              <div className="relative flex w-full justify-center overflow-visible">
+                <div
+                  className={`slot-window slot-slide ${slotStopped ? "slot-stop" : ""} flex h-[88px] w-[240px] animate-pulse items-center justify-center overflow-hidden rounded-[24px] border border-indigo-300/50 bg-white/10 px-0 text-center text-4xl font-black tracking-wide text-white shadow-[0_0_60px_rgba(99,102,241,0.35)]`}
+                >
+                  {slotStopped ? (
+                    <div className="slot-cell text-3xl font-bold">{slotHighlight}</div>
+                  ) : (
+                    <div className={`slot-track ${slotStopped ? "slot-track-paused" : ""}`}>
+                      {slotItems.map((item, itemIndex) => (
+                        <div key={`gift-slot-0-${itemIndex}`} className="slot-cell text-3xl">
+                          {item}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
               <p className="text-lg text-white/80">次の1人を抽選中…</p>
             </div>

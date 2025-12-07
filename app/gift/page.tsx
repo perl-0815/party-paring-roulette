@@ -1,6 +1,6 @@
 "use client";
 
-import { RouletteApp } from "../page";
+import RouletteApp from "../components/RouletteApp";
 
 export default function GiftPage() {
   return <RouletteApp mode="gift" />;
