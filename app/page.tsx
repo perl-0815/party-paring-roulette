@@ -722,7 +722,7 @@ const cancelResetRequest = () => setShowResetConfirm(false);
         remainingParticipants={giftRemainingParticipants}
         onSpin={handleGiftSpin}
         disableSpin={disableGiftSpinButton}
-        onReset={handleGiftReset}
+        onReset={requestGiftReset}
         edges={giftChainEdges}
       />
     </div>
