@@ -120,8 +120,8 @@ export function RouletteApp({ mode = "pair" }: { mode?: "pair" | "gift" }) {
     const mapped = giftChainIds
       .map((id) => participants.find((entry) => entry.id === id) || null)
       .filter((entry): entry is Participant => Boolean(entry));
-    for (let i = 0; i < mapped.length - 1; i += 1) {
-      edges.push({ from: mapped[i], to: mapped[i + 1] });
+    for (let i = 1; i < mapped.length; i += 1) {
+      edges.push({ from: mapped[i], to: mapped[i - 1] });
     }
     return edges;
   }, [giftChainIds, participants]);
@@ -369,16 +369,16 @@ export function RouletteApp({ mode = "pair" }: { mode?: "pair" | "gift" }) {
     return null;
   };
 
-  const pickPreferredRecipient = (giver: Participant, pool: Participant[]): Participant | null => {
+  const pickPreferredGiver = (recipient: Participant, pool: Participant[]): Participant | null => {
     if (!settings.preferredCombos.length) return null;
-    const normalized = normalize(giver.attribute);
+    const recipientAttr = normalize(recipient.attribute);
     const matchingCombos = settings.preferredCombos.filter(
-      (pref) => normalize(pref.from) === normalized
+      (pref) => normalize(pref.to) === recipientAttr
     );
     if (!matchingCombos.length) return null;
     const candidates: Participant[] = [];
     matchingCombos.forEach((pref) => {
-      const targetAttr = normalize(pref.to);
+      const targetAttr = normalize(pref.from);
       const hits = pool.filter((member) => normalize(member.attribute) === targetAttr);
       candidates.push(...hits);
     });
@@ -386,10 +386,10 @@ export function RouletteApp({ mode = "pair" }: { mode?: "pair" | "gift" }) {
     return candidates[Math.floor(Math.random() * candidates.length)];
   };
 
-  const pickDifferentAttributeRecipient = (giver: Participant, pool: Participant[]): Participant | null => {
+  const pickDifferentAttributeGiver = (recipient: Participant, pool: Participant[]): Participant | null => {
     if (!settings.avoidSameAttribute) return null;
     const candidates = pool.filter(
-      (member) => normalize(member.attribute) !== normalize(giver.attribute)
+      (member) => normalize(member.attribute) !== normalize(recipient.attribute)
     );
     if (!candidates.length) return null;
     return candidates[Math.floor(Math.random() * candidates.length)];
@@ -442,12 +442,16 @@ export function RouletteApp({ mode = "pair" }: { mode?: "pair" | "gift" }) {
       .filter((id) => !cleanedChain.includes(id));
     setGiftChainIds(cleanedChain);
     if (cleanedChain.length && cleanedRemaining.length === 0) {
-      const starter = participants.find((entry) => entry.id === cleanedChain[0]);
-      const lastPerson = participants.find((entry) => entry.id === cleanedChain[cleanedChain.length - 1]);
-      if (starter && lastPerson) {
-        setGiftStatusText(
-          `受け渡し順が確定済みです。最後は ${lastPerson.name} から ${starter.name} へプレゼントを渡します！`
-        );
+      if (cleanedChain.length > 1) {
+        const latest = participants.find((entry) => entry.id === cleanedChain[cleanedChain.length - 1]);
+        const receiver = participants.find((entry) => entry.id === cleanedChain[cleanedChain.length - 2]);
+        if (latest && receiver) {
+          setGiftStatusText(
+            `受け渡し順が確定済みです。最後は最新に選ばれた ${latest.name} から ${receiver.name} へプレゼントが渡ります。結果をクリアして再抽選できます！`
+          );
+        } else {
+          setGiftStatusText("受け渡し順がすでに確定しています！結果をクリアして再抽選できます！");
+        }
       } else {
         setGiftStatusText("受け渡し順がすでに確定しています！結果をクリアして再抽選できます！");
       }
@@ -464,13 +468,13 @@ export function RouletteApp({ mode = "pair" }: { mode?: "pair" | "gift" }) {
       if (!baseChain.length) {
         const starter = participants[Math.floor(Math.random() * participants.length)];
         setGiftChainIds([starter.id]);
-        setGiftStatusText(`${starter.name} がスタート！次の相手を抽選できます。`);
+        setGiftStatusText(`${starter.name} が最初に受け取る人として選ばれました。次の人を抽選して、渡す役を決めましょう。`);
         setIsGiftSpinning(false);
         return;
       }
-      const giverId = baseChain[baseChain.length - 1];
-      const giver = participants.find((member) => member.id === giverId);
-      if (!giver) {
+      const recipientId = baseChain[baseChain.length - 1];
+      const recipient = participants.find((member) => member.id === recipientId);
+      if (!recipient) {
         setGiftStatusText("参加者が更新されたため抽選を中断しました。リセット後に再抽選してください。");
         setIsGiftSpinning(false);
         return;
@@ -483,25 +487,22 @@ export function RouletteApp({ mode = "pair" }: { mode?: "pair" | "gift" }) {
       }
       const shouldUsePreferred =
         settings.preferredCombos.length > 0 && Math.random() * 100 < settings.preferredHitRate;
-      const preferred = shouldUsePreferred ? pickPreferredRecipient(giver, availablePool) : null;
-      const different = pickDifferentAttributeRecipient(giver, availablePool);
-      const fallback = availablePool[Math.floor(Math.random() * availablePool.length)];
-      const recipient = preferred || different || fallback;
-      if (!recipient) {
+      const preferredGiver = shouldUsePreferred ? pickPreferredGiver(recipient, availablePool) : null;
+      const differentAttrGiver = pickDifferentAttributeGiver(recipient, availablePool);
+      const fallbackGiver = availablePool[Math.floor(Math.random() * availablePool.length)];
+      const giver = preferredGiver || differentAttrGiver || fallbackGiver;
+      if (!giver) {
         setGiftStatusText("抽選できませんでした。もう一度お試しください。");
         setIsGiftSpinning(false);
         return;
       }
-      const newChain = [...baseChain, recipient.id];
-      const newRemaining = baseRemaining.filter((id) => id !== recipient.id);
+      const newChain = [...baseChain, giver.id];
+      const newRemaining = baseRemaining.filter((id) => id !== giver.id);
       setGiftChainIds(newChain);
-      const starter = participants.find((member) => member.id === baseChain[0]);
       setGiftStatusText(
         newRemaining.length === 0
-          ? starter
-            ? `${giver.name} から ${recipient.name} へ受け渡しが決定！最後は ${recipient.name} から ${starter.name} へプレゼントを渡します！`
-            : `${giver.name} から ${recipient.name} へ受け渡しが決定！全員の順番が確定しました！`
-          : `${giver.name} から ${recipient.name} へ受け渡しが決定！残り ${newRemaining.length} 人`
+          ? `${giver.name} が ${recipient.name} にプレゼントを渡します。全員の受け渡し順が確定しました。`
+          : `${giver.name} が ${recipient.name} にプレゼントを渡します！残り ${newRemaining.length} 人`
       );
       setIsGiftSpinning(false);
     }, 2300);
@@ -622,7 +623,7 @@ const cancelResetRequest = () => setShowResetConfirm(false);
           <p className="mt-3 text-lg text-white/80">
             {mode === "pair"
               ? "CSVインポート・属性バランス・優先組み合わせに対応した二人組を作るためのルーレット。"
-              : "最初の人を決めてから1人ずつ抽選し、前回当たった人から新しく選ばれた人へプレゼントをリレー。"}
+              : "最初の人を決めてから1人ずつ抽選し、新しく選ばれた人が一つ前に選ばれた人へプレゼントをリレー。"}
           </p>
           <div className="mt-6 flex flex-wrap gap-4 text-sm text-white/80">
             <span className="rounded-full border border-white/20 px-4 py-1">参加者 {totalParticipants} 名</span>
@@ -1031,6 +1032,7 @@ function RouletteView({
       ? "全員決定済み"
       : "次の人を抽選する";
   const heroOnClick = mode === "pair" ? onOpenRouletteModal : onOpenGiftModal;
+  const relayDisplayChain = [...giftChain].reverse();
   return (
     <div className="space-y-8">
       <section className="relative overflow-hidden rounded-3xl border border-white/10 bg-gradient-to-br from-slate-900/80 via-fuchsia-900/50 to-amber-900/40 p-8 text-white shadow-[0_40px_120px_rgba(0,0,0,0.55)]">
@@ -1051,7 +1053,7 @@ function RouletteView({
           <p className="mt-4 text-sm text-white/70">
             {mode === "pair"
               ? "ルーレット開始ボタンを押すと、モーダル内で抽選演出が始まります。"
-              : "最初の人を決めてから1人ずつ抽選し、前の当選者から次の人へプレゼントを渡します。"}
+              : "最初の人を決めてから1人ずつ抽選し、新しく当たった人が直前の当選者へプレゼントを渡します。"}
           </p>
           <button
             type="button"
@@ -1080,19 +1082,23 @@ function RouletteView({
                 <div className="mt-6 flex flex-col gap-4">
                   {giftChain.length === 0 && (
                     <p className="rounded-2xl border border-dashed border-white/25 bg-black/30 p-4 text-center text-white/70">
-                      参加者からランダムに最初の人を決め、優先設定を加味しながら順番をつなげます。前回当たった人が次の人へプレゼントを受け渡します。
+                      参加者からランダムに最初の人を決め、優先設定を加味しながら順番をつなげます。抽選で新しく当たった人が、直前に当たった人へプレゼントを渡していきます。
                     </p>
                   )}
                   {giftChain.length > 0 && (
                     <>
                       <div className="flex flex-wrap items-center justify-center gap-3">
-                        {giftChain.map((member, index) => {
-                          const isLast = index === giftChain.length - 1;
+                        {relayDisplayChain.map((member, index) => {
+                          const isLast = index === relayDisplayChain.length - 1;
                           return (
                             <div key={member.id} className="flex items-center gap-3">
                               <div className="min-w-[160px] rounded-2xl border border-white/15 bg-white/10 px-4 py-3 shadow-lg shadow-black/30">
                                 <p className="text-xs font-semibold uppercase tracking-[0.25em] text-white/60">
-                                  {index === 0 ? "最初の人" : `ステップ ${index + 1}`}
+                                  {index === 0
+                                    ? "最新の人"
+                                    : isLast
+                                    ? "最初に選ばれた人"
+                                    : `ステップ ${relayDisplayChain.length - index}`}
                                 </p>
                                 <p className="text-lg font-bold text-white">{member.name}</p>
                                 <p className="text-sm text-white/70">{member.attribute}</p>
@@ -1110,7 +1116,7 @@ function RouletteView({
                           <span>
                             {giftComplete
                               ? "全員の受け渡し順が決まりました。"
-                              : "前回の当選者から次の人へプレゼントを渡していきます。"}
+                              : "新しく当たった人が、直前に当たった人へプレゼントを渡していきます。"}
                           </span>
                         </div>
                       )}
@@ -1168,7 +1174,7 @@ function RouletteView({
             <h4 className="mt-2 text-xl font-semibold">優先度付きの順番抽選</h4>
             <ul className="mt-3 space-y-2 text-sm text-white/80">
               <li>最初に「最初の人」を全員からランダム選出。</li>
-              <li>次の人をボタンで1人ずつ抽選し、順番をつなぐ。</li>
+              <li>次の人をボタンで1人ずつ抽選し、新しく当たった人が直前の人へ渡す。</li>
             </ul>
             <p className="mt-4 rounded-2xl border border-white/15 bg-black/30 p-4 text-xs text-white/60">
               参加者が2名未満のときは開始できません。名簿を増やしてからお試しください。
@@ -1479,7 +1485,7 @@ export default function Home() {
               <p className="text-sm uppercase tracking-[0.35em] text-indigo-100">Gift Relay</p>
               <h2 className="mt-3 text-2xl font-semibold text-white">プレゼントリレールーレット</h2>
               <p className="mt-3 text-sm text-white/80">
-                最初の人を決めてから1人ずつ抽選し、前に選ばれた人から新しく選ばれた人へプレゼントを渡します。
+                最初の人を決めてから1人ずつ抽選し、新しく選ばれた人が直前の人へプレゼントを渡します。
               </p>
             </div>
             <span className="mt-4 inline-flex items-center gap-2 text-sm font-semibold text-indigo-50">

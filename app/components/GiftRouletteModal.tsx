@@ -36,7 +36,7 @@ export function GiftRouletteModal({
   const primarySpotlight = displaySpotlights[0];
   const latestEdge = edges.length ? edges[edges.length - 1] : null;
   const isComplete = chain.length > 1 && remainingParticipants.length === 0;
-  const finalHandoff = isComplete ? { from: chain[chain.length - 1], to: chain[0] } : null;
+  const finalHandoff = isComplete && edges.length ? edges[edges.length - 1] : null;
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center px-4 py-10">
       <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" />
@@ -45,7 +45,7 @@ export function GiftRouletteModal({
           <div>
             <p className="text-sm uppercase tracking-[0.4em] text-indigo-200">Gift Relay</p>
             <p className="text-3xl font-semibold">{statusText}</p>
-            <p className="text-sm text-white/70">抽選を1回ずつ進め、前回の抽選者から次の人へプレゼントを渡します。</p>
+            <p className="text-sm text-white/70">抽選を1回ずつ進め、新しく当たった人が直前の人へプレゼントを渡します。</p>
           </div>
           <button
             type="button"
@@ -73,7 +73,7 @@ export function GiftRouletteModal({
             <div className="space-y-6">
               {chain.length === 0 && (
                 <p className="rounded-2xl border border-dashed border-white/15 bg-black/30 p-4 text-center text-white/70">
-                  ボタンを押して最初の人を決定しましょう。決まったら、その人から次の相手へ渡す順番を1人ずつ抽選できます。
+                  ボタンを押して最初の人を決定しましょう。決まったら、次に当たった人が1つ前の人へ渡す順番を1人ずつ抽選できます。
                 </p>
               )}
               {latestEdge && (
