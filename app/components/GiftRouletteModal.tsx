@@ -35,6 +35,8 @@ export function GiftRouletteModal({
   const displaySpotlights = spotlights.length ? spotlights : FALLBACK_SPOTLIGHTS;
   const primarySpotlight = displaySpotlights[0];
   const latestEdge = edges.length ? edges[edges.length - 1] : null;
+  const isComplete = chain.length > 1 && remainingParticipants.length === 0;
+  const finalHandoff = isComplete ? { from: chain[chain.length - 1], to: chain[0] } : null;
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center px-4 py-10">
       <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" />
@@ -43,7 +45,7 @@ export function GiftRouletteModal({
           <div>
             <p className="text-sm uppercase tracking-[0.4em] text-indigo-200">Gift Relay</p>
             <p className="text-3xl font-semibold">{statusText}</p>
-            <p className="text-sm text-white/70">抽選を1回ずつ進めて順番をつなぎます。</p>
+            <p className="text-sm text-white/70">抽選を1回ずつ進め、前回の抽選者から次の人へプレゼントを渡します。</p>
           </div>
           <button
             type="button"
@@ -71,7 +73,7 @@ export function GiftRouletteModal({
             <div className="space-y-6">
               {chain.length === 0 && (
                 <p className="rounded-2xl border border-dashed border-white/15 bg-black/30 p-4 text-center text-white/70">
-                  ボタンを押して最初の人を決定しましょう。決まったら、次の相手を1人ずつ抽選できます。
+                  ボタンを押して最初の人を決定しましょう。決まったら、その人から次の相手へ渡す順番を1人ずつ抽選できます。
                 </p>
               )}
               {latestEdge && (
@@ -89,12 +91,26 @@ export function GiftRouletteModal({
                   </div>
                 </div>
               )}
-              {chain.length > 0 && remainingParticipants.length === 0 && (
+              {isComplete && (
                 <div className="flex items-center justify-center gap-2 text-sm text-amber-100">
                   <span className="rounded-full border border-amber-200/50 px-3 py-1 text-xs uppercase tracking-[0.25em]">
-                    LOOP
+                    RELAY
                   </span>
-                  <span>全員の順番が確定しました。</span>
+                  <span>すべての受け渡し順が確定しました！</span>
+                </div>
+              )}
+              {finalHandoff && (
+                <div className="rounded-2xl border border-indigo-200/50 bg-white/5 p-4 text-center shadow-[0_0_50px_rgba(99,102,241,0.25)]">
+                  <p className="text-xs uppercase tracking-[0.3em] text-indigo-100/80">最終の受け渡し</p>
+                  <div className="mt-3 flex flex-wrap items-center justify-center gap-3 text-xl font-bold">
+                    <span className="rounded-xl border border-white/25 bg-white/10 px-3 py-1">{finalHandoff.from.name}</span>
+                    <span className="text-white/70">が</span>
+                    <span className="rounded-xl border border-white/25 bg-white/10 px-3 py-1">{finalHandoff.to.name}</span>
+                    <span className="text-white/70">へ渡します！</span>
+                  </div>
+                  <p className="mt-1 text-xs text-white/60">
+                    属性: {finalHandoff.from.attribute} → {finalHandoff.to.attribute}
+                  </p>
                 </div>
               )}
               {remainingParticipants.length > 0 && (

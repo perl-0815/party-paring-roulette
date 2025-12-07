@@ -123,13 +123,11 @@ export function RouletteApp({ mode = "pair" }: { mode?: "pair" | "gift" }) {
     for (let i = 0; i < mapped.length - 1; i += 1) {
       edges.push({ from: mapped[i], to: mapped[i + 1] });
     }
-    if (mapped.length > 1) {
-      edges.push({ from: mapped[mapped.length - 1], to: mapped[0] });
-    }
     return edges;
   }, [giftChainIds, participants]);
   const [csvError, setCsvError] = useState<string | null>(null);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
+  const [showGiftResetConfirm, setShowGiftResetConfirm] = useState(false);
   const [isRouletteModalOpen, setIsRouletteModalOpen] = useState(false);
 
   const appendAvailableEntries = (entries: Participant[]) => {
@@ -444,7 +442,15 @@ export function RouletteApp({ mode = "pair" }: { mode?: "pair" | "gift" }) {
       .filter((id) => !cleanedChain.includes(id));
     setGiftChainIds(cleanedChain);
     if (cleanedChain.length && cleanedRemaining.length === 0) {
-      setGiftStatusText("全員の順番が確定しています。クリアして再抽選できます。");
+      const starter = participants.find((entry) => entry.id === cleanedChain[0]);
+      const lastPerson = participants.find((entry) => entry.id === cleanedChain[cleanedChain.length - 1]);
+      if (starter && lastPerson) {
+        setGiftStatusText(
+          `受け渡し順が確定済みです。最後は ${lastPerson.name} から ${starter.name} へプレゼントを渡します！`
+        );
+      } else {
+        setGiftStatusText("受け渡し順がすでに確定しています！結果をクリアして再抽選できます！");
+      }
       return;
     }
     setIsGiftSpinning(true);
@@ -489,10 +495,13 @@ export function RouletteApp({ mode = "pair" }: { mode?: "pair" | "gift" }) {
       const newChain = [...baseChain, recipient.id];
       const newRemaining = baseRemaining.filter((id) => id !== recipient.id);
       setGiftChainIds(newChain);
+      const starter = participants.find((member) => member.id === baseChain[0]);
       setGiftStatusText(
         newRemaining.length === 0
-          ? "全員の順番が確定しました。"
-          : `${recipient.name} が決定！残り ${newRemaining.length} 人`
+          ? starter
+            ? `${giver.name} から ${recipient.name} へ受け渡しが決定！最後は ${recipient.name} から ${starter.name} へプレゼントを渡します！`
+            : `${giver.name} から ${recipient.name} へ受け渡しが決定！全員の順番が確定しました！`
+          : `${giver.name} から ${recipient.name} へ受け渡しが決定！残り ${newRemaining.length} 人`
       );
       setIsGiftSpinning(false);
     }, 2300);
@@ -522,13 +531,24 @@ export function RouletteApp({ mode = "pair" }: { mode?: "pair" | "gift" }) {
 const requestFullReset = () => setShowResetConfirm(true);
 const cancelResetRequest = () => setShowResetConfirm(false);
 
-const handleGiftReset = () => {
-  if (isGiftSpinning) return;
-  setGiftChainIds([]);
-  setGiftSpotlights(FALLBACK_SPOTLIGHTS);
-  setGiftStatusText("結果をクリアしました");
-  setIsGiftModalOpen(false);
-};
+  const requestGiftReset = () => {
+    if (isGiftSpinning) return;
+    setShowGiftResetConfirm(true);
+  };
+
+  const cancelGiftResetRequest = () => setShowGiftResetConfirm(false);
+
+  const handleGiftReset = () => {
+    if (isGiftSpinning) {
+      setShowGiftResetConfirm(false);
+      return;
+    }
+    setGiftChainIds([]);
+    setGiftSpotlights(FALLBACK_SPOTLIGHTS);
+    setGiftStatusText("結果をクリアしました");
+    setIsGiftModalOpen(false);
+    setShowGiftResetConfirm(false);
+  };
 
   const disableSpinButton = isSpinning || availableParticipants.length < 2;
   const giftComplete = giftChainIds.length > 0 && giftRemainingParticipants.length === 0;
@@ -601,8 +621,8 @@ const handleGiftReset = () => {
           </h1>
           <p className="mt-3 text-lg text-white/80">
             {mode === "pair"
-              ? "CSVインポート・属性バランス・優先組み合わせに対応した二人組を作るためのルーレット。ブラウザのみで動作します。"
-              : "最初の人を決めてから1人ずつ抽選し、最後の人が最初の人へプレゼントを渡すリレー形式。優先設定と同属性回避を活用できます。"}
+              ? "CSVインポート・属性バランス・優先組み合わせに対応した二人組を作るためのルーレット。"
+              : "最初の人を決めてから1人ずつ抽選し、前回当たった人から新しく選ばれた人へプレゼントをリレー。"}
           </p>
           <div className="mt-6 flex flex-wrap gap-4 text-sm text-white/80">
             <span className="rounded-full border border-white/20 px-4 py-1">参加者 {totalParticipants} 名</span>
@@ -661,7 +681,7 @@ const handleGiftReset = () => {
             isSpinning={isSpinning}
             giftChain={giftChain}
             giftStatusText={giftStatusText}
-            onGiftReset={handleGiftReset}
+            onGiftReset={requestGiftReset}
             disableGiftSpinButton={disableGiftSpinButton}
             isGiftSpinning={isGiftSpinning}
             giftRemainingParticipants={giftRemainingParticipants}
@@ -682,6 +702,12 @@ const handleGiftReset = () => {
         open={showResetConfirm}
         onCancel={cancelResetRequest}
         onConfirm={handleReset}
+      />
+      <GiftResetConfirmDialog
+        open={showGiftResetConfirm}
+        onCancel={cancelGiftResetRequest}
+        onConfirm={handleGiftReset}
+        disableConfirm={isGiftSpinning}
       />
       <GiftRouletteModal
         isOpen={isGiftModalOpen}
@@ -1025,7 +1051,7 @@ function RouletteView({
           <p className="mt-4 text-sm text-white/70">
             {mode === "pair"
               ? "ルーレット開始ボタンを押すと、モーダル内で抽選演出が始まります。"
-              : "最初の人を決めてから1人ずつ抽選し、最後の人が最初の人へプレゼントを戻します。"}
+              : "最初の人を決めてから1人ずつ抽選し、前の当選者から次の人へプレゼントを渡します。"}
           </p>
           <button
             type="button"
@@ -1054,7 +1080,7 @@ function RouletteView({
                 <div className="mt-6 flex flex-col gap-4">
                   {giftChain.length === 0 && (
                     <p className="rounded-2xl border border-dashed border-white/25 bg-black/30 p-4 text-center text-white/70">
-                      参加者からランダムに最初の人を決め、優先設定を加味しながら順番をつなげます。最後の人が最初の人へプレゼントを返します。
+                      参加者からランダムに最初の人を決め、優先設定を加味しながら順番をつなげます。前回当たった人が次の人へプレゼントを受け渡します。
                     </p>
                   )}
                   {giftChain.length > 0 && (
@@ -1079,9 +1105,13 @@ function RouletteView({
                       {giftChain.length > 1 && (
                         <div className="flex items-center justify-center gap-2 text-sm text-amber-100">
                           <span className="rounded-full border border-amber-200/50 px-3 py-1 text-xs uppercase tracking-[0.25em]">
-                            LOOP
+                            RELAY
                           </span>
-                          <span>並びが確定しました。</span>
+                          <span>
+                            {giftComplete
+                              ? "全員の受け渡し順が決まりました。"
+                              : "前回の当選者から次の人へプレゼントを渡していきます。"}
+                          </span>
                         </div>
                       )}
                     </>
@@ -1365,6 +1395,50 @@ function ResetConfirmDialog({ open, onCancel, onConfirm }: ResetConfirmDialogPro
   );
 }
 
+type GiftResetConfirmDialogProps = {
+  open: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+  disableConfirm: boolean;
+};
+
+function GiftResetConfirmDialog({ open, onCancel, onConfirm, disableConfirm }: GiftResetConfirmDialogProps) {
+  if (!open) return null;
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center px-4">
+      <div className="absolute inset-0 bg-black/60" />
+      <div className="relative z-10 w-full max-w-md rounded-3xl border border-white/20 bg-slate-950/90 p-6 text-white shadow-2xl">
+        <p className="text-sm uppercase tracking-[0.4em] text-indigo-200">Confirm</p>
+        <h3 className="mt-3 text-2xl font-semibold">抽選結果をクリアしますか？</h3>
+        <p className="mt-2 text-sm text-white/70">
+          現在の受け渡し順がすべて削除されます。あとから元に戻すことはできません。
+        </p>
+        <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:justify-end">
+          <button
+            type="button"
+            onClick={onCancel}
+            className="rounded-full border border-white/30 px-5 py-2 text-sm text-white/80 transition hover:text-white"
+          >
+            キャンセル
+          </button>
+          <button
+            type="button"
+            onClick={onConfirm}
+            disabled={disableConfirm}
+            className={`rounded-full border px-5 py-2 text-sm font-semibold transition ${
+              disableConfirm
+                ? "cursor-not-allowed border-white/15 text-white/40"
+                : "border-indigo-300/70 text-indigo-50 hover:border-indigo-200 hover:text-white"
+            }`}
+          >
+            抽選結果をクリア
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function Home() {
   return (
     <div className="min-h-screen bg-[radial-gradient(circle_at_top,_rgba(244,114,182,0.25),_rgba(2,6,23,1))] pb-16 text-white">
@@ -1405,7 +1479,7 @@ export default function Home() {
               <p className="text-sm uppercase tracking-[0.35em] text-indigo-100">Gift Relay</p>
               <h2 className="mt-3 text-2xl font-semibold text-white">プレゼントリレールーレット</h2>
               <p className="mt-3 text-sm text-white/80">
-                最初の人を決めてから1人ずつ抽選し、最後の人が最初の人へプレゼントを渡します。
+                最初の人を決めてから1人ずつ抽選し、前に選ばれた人から新しく選ばれた人へプレゼントを渡します。
               </p>
             </div>
             <span className="mt-4 inline-flex items-center gap-2 text-sm font-semibold text-indigo-50">
