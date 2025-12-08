@@ -117,6 +117,8 @@ export function RouletteApp({ mode = "pair" }: { mode?: "pair" | "gift" }) {
   const pairSlotTimeoutsRef = useRef<number[]>([]);
   const giftSlotIntervalRef = useRef<number | null>(null);
   const giftSlotTimeoutsRef = useRef<number[]>([]);
+  const pairSpinRef = useRef<() => void>(() => {});
+  const giftSpinRef = useRef<() => void>(() => {});
   const [pairSlotStopped, setPairSlotStopped] = useState(false);
   const [giftSlotStopped, setGiftSlotStopped] = useState(false);
   const [pairSlotResultName, setPairSlotResultName] = useState<string | null>(null);
@@ -643,9 +645,15 @@ const cancelResetRequest = () => setShowResetConfirm(false);
     setShowSparkle(false);
   };
 
+  useEffect(() => {
+    pairSpinRef.current = handleSpin;
+    giftSpinRef.current = handleGiftSpin;
+  });
+
   const disableSpinButton = isSpinning || availableParticipants.length < 2;
   const giftComplete = giftChainIds.length > 0 && giftRemainingParticipants.length === 0;
   const disableGiftSpinButton = isGiftSpinning || participants.length < 2 || giftComplete;
+  const disableGiftRerollButton = isGiftSpinning || giftChainIds.length === 0;
   const showTrioHint = availableParticipants.length === 3;
   const toggleAvoidSame = () => {
     setSettings((prev) => ({
@@ -668,11 +676,53 @@ const cancelResetRequest = () => setShowResetConfirm(false);
     handleSpin();
   };
 
+  const handleRerollLatest = () => {
+    if (isSpinning) return;
+    const lastPair = pairs[pairs.length - 1];
+    if (!lastPair) return;
+    const restoredMembers = lastPair.members.filter((member) =>
+      participants.some((entry) => entry.id === member.id)
+    );
+    if (!restoredMembers.length) return;
+    setPairs((prev) => prev.slice(0, -1));
+    prependAvailableEntries(restoredMembers);
+    setLatestHighlight(null);
+    setShowPairResultPanel(false);
+    setPairSlotResultName(null);
+    setPairSlotStopped(false);
+    setSpotlights(FALLBACK_SPOTLIGHTS);
+    setShowSparkle(false);
+    setStatusText("最後の抽選をやり直します");
+    setIsRouletteModalOpen(true);
+    window.setTimeout(() => {
+      pairSpinRef.current();
+    }, 0);
+  };
+
   const handleOpenGiftModal = () => {
     if (participants.length < 2 || isGiftSpinning) return;
     setView("roulette");
     setIsGiftModalOpen(true);
     handleGiftSpin();
+  };
+
+  const handleGiftReroll = () => {
+    if (isGiftSpinning) return;
+    if (!giftChainIds.length) return;
+    const lastId = giftChainIds[giftChainIds.length - 1];
+    const lastParticipant = participants.find((entry) => entry.id === lastId);
+    if (!lastParticipant) return;
+    const updatedChain = giftChainIds.slice(0, -1);
+    setGiftChainIds(updatedChain);
+    setGiftSlotResultName(null);
+    setGiftSlotStopped(false);
+    setGiftSpotlights(FALLBACK_SPOTLIGHTS);
+    setShowSparkle(false);
+    setGiftStatusText(`${lastParticipant.name} を再抽選します`);
+    setIsGiftModalOpen(true);
+    window.setTimeout(() => {
+      giftSpinRef.current();
+    }, 0);
   };
 
   const handleReleasePair = (pairId: string) => {
@@ -801,11 +851,13 @@ const cancelResetRequest = () => setShowResetConfirm(false);
       <RouletteModal
         isOpen={isRouletteModalOpen}
         onClose={handleCloseRouletteModal}
+        onReroll={handleRerollLatest}
         isSpinning={isSpinning}
         spotlights={spotlights}
         latestHighlight={latestHighlight}
         statusText={statusText}
         disableClose={isSpinning}
+        disableReroll={isSpinning || pairs.length === 0}
         slotStopped={pairSlotStopped}
         slotResultName={pairSlotResultName}
         showSparkle={showSparkle}
@@ -828,6 +880,7 @@ const cancelResetRequest = () => setShowResetConfirm(false);
           if (isGiftSpinning) return;
           setIsGiftModalOpen(false);
         }}
+        onReroll={handleGiftReroll}
         isSpinning={isGiftSpinning}
         spotlights={giftSpotlights}
         statusText={giftStatusText}
@@ -835,6 +888,7 @@ const cancelResetRequest = () => setShowResetConfirm(false);
         remainingParticipants={giftRemainingParticipants}
         onSpin={handleGiftSpin}
         disableSpin={disableGiftSpinButton}
+        disableReroll={disableGiftRerollButton}
         onReset={requestGiftReset}
         edges={giftChainEdges}
         slotStopped={giftSlotStopped}
@@ -1398,11 +1452,13 @@ function RouletteView({
 type RouletteModalProps = {
   isOpen: boolean;
   onClose: () => void;
+  onReroll: () => void;
   isSpinning: boolean;
   spotlights: string[];
   latestHighlight: PairGroup | null;
   statusText: string;
   disableClose: boolean;
+  disableReroll: boolean;
   slotStopped: boolean;
   slotResultName: string | null;
   showSparkle: boolean;
@@ -1412,11 +1468,13 @@ type RouletteModalProps = {
 function RouletteModal({
   isOpen,
   onClose,
+  onReroll,
   isSpinning,
   spotlights,
   latestHighlight,
   statusText,
   disableClose,
+  disableReroll,
   slotStopped,
   slotResultName,
   showSparkle,
@@ -1449,18 +1507,32 @@ function RouletteModal({
             <p className="text-sm uppercase tracking-[0.4em] text-fuchsia-200">LIVE ROULETTE</p>
             <p className="text-3xl font-semibold">{statusText}</p>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            disabled={disableClose}
-            className={`rounded-full border px-4 py-2 text-sm transition ${
-              disableClose
-                ? "cursor-not-allowed border-white/10 text-white/30"
-                : "border-white/30 text-white/90 hover:border-white hover:text-white"
-            }`}
-          >
-            閉じる
-          </button>
+          <div className="flex flex-col gap-3 sm:items-end">
+            <button
+              type="button"
+              onClick={onClose}
+              disabled={disableClose}
+              className={`rounded-full border px-4 py-2 text-sm transition ${
+                disableClose
+                  ? "cursor-not-allowed border-white/10 text-white/30"
+                  : "border-white/30 text-white/90 hover:border-white hover:text-white"
+              }`}
+            >
+              閉じる
+            </button>
+            <button
+              type="button"
+              onClick={onReroll}
+              disabled={disableReroll}
+              className={`rounded-full border px-4 py-2 text-sm font-semibold transition ${
+                disableReroll
+                  ? "cursor-not-allowed border-white/10 text-white/30"
+                  : "border-amber-200/70 text-amber-50 hover:border-amber-100 hover:text-white"
+              }`}
+            >
+              再抽選
+            </button>
+          </div>
         </div>
         <div className="relative mt-8 min-h-[280px] w-full text-center">
           <div

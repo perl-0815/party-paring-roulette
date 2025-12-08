@@ -6,6 +6,7 @@ import type { Participant } from "./RouletteApp";
 type GiftRouletteModalProps = {
   isOpen: boolean;
   onClose: () => void;
+  onReroll: () => void;
   isSpinning: boolean;
   spotlights: string[];
   statusText: string;
@@ -13,6 +14,7 @@ type GiftRouletteModalProps = {
   remainingParticipants: Participant[];
   onSpin: () => void;
   disableSpin: boolean;
+  disableReroll: boolean;
   onReset: () => void;
   edges: { from: Participant; to: Participant }[];
   slotStopped: boolean;
@@ -25,6 +27,7 @@ const FALLBACK_SPOTLIGHTS = ["Ready", "Set", "Go"];
 export function GiftRouletteModal({
   isOpen,
   onClose,
+  onReroll,
   isSpinning,
   spotlights,
   statusText,
@@ -32,6 +35,7 @@ export function GiftRouletteModal({
   remainingParticipants,
   onSpin,
   disableSpin,
+  disableReroll,
   onReset,
   edges,
   slotStopped,
@@ -67,18 +71,32 @@ export function GiftRouletteModal({
             <p className="text-3xl font-semibold">{statusText}</p>
             <p className="text-sm text-white/70">抽選を1回ずつ進め、新しく当たった人が直前の人へプレゼントを渡します。</p>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            disabled={isSpinning}
-            className={`rounded-full border px-4 py-2 text-sm transition ${
-              isSpinning
-                ? "cursor-not-allowed border-white/10 text-white/30"
-                : "border-white/30 text-white/90 hover:border-white hover:text-white"
-            }`}
-          >
-            閉じる
-          </button>
+          <div className="flex flex-col gap-3 sm:items-end">
+            <button
+              type="button"
+              onClick={onClose}
+              disabled={isSpinning}
+              className={`rounded-full border px-4 py-2 text-sm transition ${
+                isSpinning
+                  ? "cursor-not-allowed border-white/10 text-white/30"
+                  : "border-white/30 text-white/90 hover:border-white hover:text-white"
+              }`}
+            >
+              閉じる
+            </button>
+            <button
+              type="button"
+              onClick={onReroll}
+              disabled={disableReroll}
+              className={`rounded-full border px-4 py-2 text-sm font-semibold transition ${
+                disableReroll
+                  ? "cursor-not-allowed border-white/10 text-white/30"
+                  : "border-amber-200/70 text-amber-50 hover:border-amber-100 hover:text-white"
+              }`}
+            >
+              再抽選
+            </button>
+          </div>
         </div>
         <div className="mt-8 flex flex-col gap-6">
           {showSlot && (
